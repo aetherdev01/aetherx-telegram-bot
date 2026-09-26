@@ -8,6 +8,7 @@ function emptyCatalog() {
     latest: null,
     versions: [],
     sessions: {},
+    uiMessages: {},
     updatedAt: new Date().toISOString(),
   };
 }
@@ -21,6 +22,7 @@ function normalizeCatalog(data) {
     latest: data.latest && typeof data.latest === "object" ? data.latest : null,
     versions: Array.isArray(data.versions) ? data.versions.filter(Boolean).slice(0, 100) : [],
     sessions: data.sessions && typeof data.sessions === "object" ? data.sessions : {},
+    uiMessages: data.uiMessages && typeof data.uiMessages === "object" ? data.uiMessages : {},
     updatedAt: data.updatedAt || base.updatedAt,
   };
 }

@@ -38,6 +38,77 @@ async function sendMessage(chatId, text, replyMarkup) {
   });
 }
 
+async function editMessageText(chatId, messageId, text, replyMarkup) {
+  return telegramJson("editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+    ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+  });
+}
+
+async function deleteMessage(chatId, messageId) {
+  try {
+    await telegramJson("deleteMessage", {
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  } catch {
+    // The message may already be gone or Telegram may reject the deletion.
+  }
+}
+
+function uiState(catalog, chatId) {
+  const key = String(chatId);
+  if (!catalog.uiMessages || typeof catalog.uiMessages !== "object") {
+    catalog.uiMessages = {};
+  }
+  return catalog.uiMessages[key] || null;
+}
+
+async function replaceBotMessage(chatId, text, replyMarkup, catalog) {
+  const current = uiState(catalog, chatId);
+
+  if (current?.messageId && current.kind === "text") {
+    try {
+      const edited = await editMessageText(chatId, current.messageId, text, replyMarkup);
+      catalog.uiMessages[String(chatId)] = {
+        messageId: edited.message_id,
+        kind: "text",
+      };
+      await saveCatalog(catalog);
+      return edited;
+    } catch {
+      await deleteMessage(chatId, current.messageId);
+    }
+  } else if (current?.messageId) {
+    await deleteMessage(chatId, current.messageId);
+  }
+
+  const sent = await sendMessage(chatId, text, replyMarkup);
+  catalog.uiMessages[String(chatId)] = {
+    messageId: sent.message_id,
+    kind: "text",
+  };
+  await saveCatalog(catalog);
+  return sent;
+}
+
+async function replaceWithDocument(chatId, fileId, caption, catalog) {
+  const current = uiState(catalog, chatId);
+  if (current?.messageId) {
+    await deleteMessage(chatId, current.messageId);
+  }
+
+  const sent = await sendDocument(chatId, fileId, caption);
+  catalog.uiMessages[String(chatId)] = {
+    messageId: sent.message_id,
+    kind: "document",
+  };
+  await saveCatalog(catalog);
+  return sent;
+}
+
 async function sendDocument(chatId, fileId, caption) {
   return telegramJson("sendDocument", {
     chat_id: chatId,
@@ -67,9 +138,9 @@ function releaseButton(release) {
     : { text: "⬇️ Buka Link Download", url: release.url };
 }
 
-async function sendRelease(chatId, release, contextLabel = "Versi terbaru") {
+async function sendRelease(chatId, release, contextLabel = "Versi terbaru", catalog) {
   if (!release) {
-    await sendMessage(chatId, "📦 Belum ada versi AetherX yang tersedia.");
+    await replaceBotMessage(chatId, "📦 Belum ada versi AetherX yang tersedia.", undefined, catalog);
     return;
   }
 
@@ -78,27 +149,30 @@ async function sendRelease(chatId, release, contextLabel = "Versi terbaru") {
 
   if (release.source === "file" && release.fileId) {
     try {
-      await sendDocument(chatId, release.fileId, caption);
+      await replaceWithDocument(chatId, release.fileId, caption, catalog);
       return;
     } catch (error) {
-      await sendMessage(
+      await replaceBotMessage(
         chatId,
         `⚠️ File AetherX ${version} gagal dikirim langsung.\n\n${error.message}`,
+        undefined,
+        catalog,
       );
       return;
     }
   }
 
   if (release.source === "link" && release.url) {
-    await sendMessage(
+    await replaceBotMessage(
       chatId,
       `${caption}\n\nFile siap diunduh:`,
       { inline_keyboard: [[{ text: "⬇️ Download AetherX", url: release.url }]] },
+      catalog,
     );
     return;
   }
 
-  await sendMessage(chatId, `❌ Data versi ${version} tidak lengkap.`);
+  await replaceBotMessage(chatId, `❌ Data versi ${version} tidak lengkap.`, undefined, catalog);
 }
 
 function makeId() {
@@ -130,16 +204,17 @@ function adminKeyboard() {
   };
 }
 
-async function showAdminMenu(chatId) {
-  await sendMessage(
+async function showAdminMenu(chatId, catalog) {
+  await replaceBotMessage(
     chatId,
     "🛠 AetherX Admin\n\nPilih tindakan untuk mengatur versi AetherX yang diberikan kepada pengguna.",
     adminKeyboard(),
+    catalog,
   );
 }
 
-async function showSourceChoice(chatId, target) {
-  await sendMessage(
+async function showSourceChoice(chatId, target, catalog) {
+  await replaceBotMessage(
     chatId,
     target === "latest"
       ? "🚀 Upload Versi Terbaru\n\nPilih sumber file:":
@@ -151,16 +226,18 @@ async function showSourceChoice(chatId, target) {
         [{ text: "❌ Batal", callback_data: "admin:cancel" }],
       ],
     },
+    catalog,
   );
 }
 
-async function showVersionPrompt(chatId, source, target) {
-  await sendMessage(
+async function showVersionPrompt(chatId, source, target, catalog) {
+  await replaceBotMessage(
     chatId,
     `Sumber dipilih: ${source === "file" ? "📁 APK / ZIP" : "🔗 Link"}.\n\nKirim nomor versi, contoh:\nv1.5.0`,
     {
       inline_keyboard: [[{ text: "❌ Batal", callback_data: "admin:cancel" }]],
     },
+    catalog,
   );
 }
 
@@ -169,15 +246,17 @@ async function finishWithFile(chatId, catalog, session, document) {
   const lowerName = fileName.toLowerCase();
 
   if (!/\.(apk|zip)$/i.test(lowerName)) {
-    await sendMessage(chatId, "❌ File harus berekstensi .apk atau .zip.");
+    await replaceBotMessage(chatId, "❌ File harus berekstensi .apk atau .zip.", undefined, catalog);
     return false;
   }
 
   const size = Number(document.file_size || 0);
   if (size > MAX_SEND_FILE_BYTES) {
-    await sendMessage(
+    await replaceBotMessage(
       chatId,
       "❌ File terlalu besar. Bot saat ini mengirim file Telegram maksimal sekitar 50 MB.",
+      undefined,
+      catalog,
     );
     return false;
   }
@@ -204,10 +283,11 @@ async function finishWithFile(chatId, catalog, session, document) {
 
   await saveCatalog(catalog);
 
-  await sendMessage(
+  await replaceBotMessage(
     chatId,
     `✅ Versi ${release.version} berhasil disimpan sebagai ${session.target === "latest" ? "versi terbaru" : "versi lama"}.\n\n📁 ${fileName}`,
     adminKeyboard(),
+    catalog,
   );
 
   return true;
@@ -220,7 +300,7 @@ async function finishWithLink(chatId, catalog, session, text) {
     if (!["http:", "https:"].includes(parsed.protocol)) throw new Error();
     url = parsed.toString();
   } catch {
-    await sendMessage(chatId, "❌ Link tidak valid. Kirim URL http:// atau https:// yang lengkap.");
+    await replaceBotMessage(chatId, "❌ Link tidak valid. Kirim URL http:// atau https:// yang lengkap.", undefined, catalog);
     return false;
   }
 
@@ -244,10 +324,11 @@ async function finishWithLink(chatId, catalog, session, text) {
 
   await saveCatalog(catalog);
 
-  await sendMessage(
+  await replaceBotMessage(
     chatId,
     `✅ Versi ${release.version} berhasil disimpan sebagai ${session.target === "latest" ? "versi terbaru" : "versi lama"}.\n\n🔗 ${url}`,
     adminKeyboard(),
+    catalog,
   );
 
   return true;
@@ -266,13 +347,13 @@ async function handleAdminMessage(message, catalog) {
   if (text === "/cancel") {
     delete catalog.sessions[userId];
     await saveCatalog(catalog);
-    await sendMessage(chatId, "❌ Proses admin dibatalkan.", adminKeyboard());
+    await replaceBotMessage(chatId, "❌ Proses admin dibatalkan.", adminKeyboard(), catalog);
     return true;
   }
 
   if (session.step === "version") {
     if (!text || text.startsWith("/")) {
-      await sendMessage(chatId, "Kirim nomor versi terlebih dahulu, contoh: v1.5.0");
+      await replaceBotMessage(chatId, "Kirim nomor versi terlebih dahulu, contoh: v1.5.0", undefined, catalog);
       return false;
     }
 
@@ -285,12 +366,13 @@ async function handleAdminMessage(message, catalog) {
 
     await saveCatalog(catalog);
 
-    await sendMessage(
+    await replaceBotMessage(
       chatId,
       session.source === "file"
         ? `✅ Versi ${version} dipilih.\n\nSekarang kirim file .apk atau .zip sebagai document.`
         : `✅ Versi ${version} dipilih.\n\nSekarang kirim link download https://...`,
       { inline_keyboard: [[{ text: "❌ Batal", callback_data: "admin:cancel" }]] },
+      catalog,
     );
     return true;
   }
@@ -301,7 +383,7 @@ async function handleAdminMessage(message, catalog) {
 
   if (session.step === "file") {
     if (!message.document) {
-      await sendMessage(chatId, "📁 Kirim file .apk atau .zip sebagai Document, bukan teks.");
+      await replaceBotMessage(chatId, "📁 Kirim file .apk atau .zip sebagai Document, bukan teks.", undefined, catalog);
       return false;
     }
     return finishWithFile(chatId, catalog, session, message.document);
@@ -312,21 +394,21 @@ async function handleAdminMessage(message, catalog) {
 
 async function handleAdminCallback(chatId, userId, data, catalog) {
   if (!isAdmin(userId)) {
-    await sendMessage(chatId, "❌ Kamu tidak memiliki akses admin.");
+    await replaceBotMessage(chatId, "❌ Kamu tidak memiliki akses admin.", undefined, catalog);
     return false;
   }
 
   const userKey = String(userId);
 
   if (data === "admin:open") {
-    await showAdminMenu(chatId);
+    await showAdminMenu(chatId, catalog);
     return false;
   }
 
   if (data === "admin:cancel") {
     delete catalog.sessions[userKey];
     await saveCatalog(catalog);
-    await sendMessage(chatId, "❌ Proses dibatalkan.", adminKeyboard());
+    await replaceBotMessage(chatId, "❌ Proses dibatalkan.", adminKeyboard(), catalog);
     return true;
   }
 
@@ -334,7 +416,7 @@ async function handleAdminCallback(chatId, userId, data, catalog) {
     const target = data.endsWith(":latest") ? "latest" : "old";
     catalog.sessions[userKey] = { action: "add", target, step: "source" };
     await saveCatalog(catalog);
-    await showSourceChoice(chatId, target);
+    await showSourceChoice(chatId, target, catalog);
     return true;
   }
 
@@ -343,7 +425,7 @@ async function handleAdminCallback(chatId, userId, data, catalog) {
     const [, source, target] = sourceMatch;
     catalog.sessions[userKey] = { action: "add", target, source, step: "version" };
     await saveCatalog(catalog);
-    await showVersionPrompt(chatId, source, target);
+    await showVersionPrompt(chatId, source, target, catalog);
     return true;
   }
 
@@ -389,7 +471,7 @@ async function showAdminList(chatId, catalog) {
     }
   }
 
-  await sendMessage(chatId, lines.join("\n"), adminKeyboard());
+  await replaceBotMessage(chatId, lines.join("\n"), adminKeyboard(), catalog);
 }
 
 async function showDeleteList(chatId, catalog) {
@@ -404,12 +486,12 @@ async function showDeleteList(chatId, catalog) {
   }
 
   if (!rows.length) {
-    await sendMessage(chatId, "📦 Belum ada versi yang bisa dihapus.", adminKeyboard());
+    await replaceBotMessage(chatId, "📦 Belum ada versi yang bisa dihapus.", adminKeyboard(), catalog);
     return;
   }
 
   rows.push([{ text: "❌ Batal", callback_data: "admin:cancel" }]);
-  await sendMessage(chatId, "🗑 Pilih versi yang ingin dihapus:", { inline_keyboard: rows });
+  await replaceBotMessage(chatId, "🗑 Pilih versi yang ingin dihapus:", { inline_keyboard: rows }, catalog);
 }
 
 function findRelease(catalog, id) {
@@ -422,11 +504,11 @@ function findRelease(catalog, id) {
 async function confirmDelete(chatId, id, catalog) {
   const found = findRelease(catalog, id);
   if (!found) {
-    await sendMessage(chatId, "❌ Versi tersebut tidak ditemukan.", adminKeyboard());
+    await replaceBotMessage(chatId, "❌ Versi tersebut tidak ditemukan.", adminKeyboard(), catalog);
     return;
   }
 
-  await sendMessage(
+  await replaceBotMessage(
     chatId,
     `⚠️ Hapus versi ${found.release.version}?\n\nTindakan ini hanya menghapus versi dari katalog bot.`,
     {
@@ -435,13 +517,14 @@ async function confirmDelete(chatId, id, catalog) {
         [{ text: "❌ Batal", callback_data: "admin:cancel" }],
       ],
     },
+    catalog,
   );
 }
 
 async function deleteRelease(chatId, id, catalog) {
   const found = findRelease(catalog, id);
   if (!found) {
-    await sendMessage(chatId, "❌ Versi tersebut tidak ditemukan.", adminKeyboard());
+    await replaceBotMessage(chatId, "❌ Versi tersebut tidak ditemukan.", adminKeyboard(), catalog);
     return false;
   }
 
@@ -452,7 +535,7 @@ async function deleteRelease(chatId, id, catalog) {
   }
 
   await saveCatalog(catalog);
-  await sendMessage(chatId, `✅ Versi ${found.release.version} berhasil dihapus.`, adminKeyboard());
+  await replaceBotMessage(chatId, `✅ Versi ${found.release.version} berhasil dihapus.`, adminKeyboard(), catalog);
   return true;
 }
 
@@ -466,10 +549,11 @@ async function handleStart(chatId, userId, catalog) {
     keyboard.push([{ text: "🛠 Admin", callback_data: "admin:open" }]);
   }
 
-  await sendMessage(
+  await replaceBotMessage(
     chatId,
     "🚀 AetherX\n\nPilih versi AetherX yang ingin kamu download.",
     { inline_keyboard: keyboard },
+    catalog,
   );
 
   if (isAdmin(userId) && catalog.sessions[String(userId)]) {
@@ -482,12 +566,12 @@ async function handleStart(chatId, userId, catalog) {
 }
 
 async function handleLatest(chatId, catalog) {
-  await sendRelease(chatId, catalog.latest, "Versi terbaru tersedia");
+  await sendRelease(chatId, catalog.latest, "Versi terbaru tersedia", catalog);
 }
 
 async function handleOld(chatId, catalog) {
   if (!catalog.versions.length) {
-    await sendMessage(chatId, "📦 Belum ada versi AetherX sebelumnya.");
+    await replaceBotMessage(chatId, "📦 Belum ada versi AetherX sebelumnya.", undefined, catalog);
     return;
   }
 
@@ -498,34 +582,39 @@ async function handleOld(chatId, catalog) {
     },
   ]);
 
-  await sendMessage(
+  await replaceBotMessage(
     chatId,
     "📦 Versi AetherX sebelumnya:\n\nPilih versi yang ingin kamu download.",
     { inline_keyboard: rows },
+    catalog,
   );
 }
 
 async function handleOldIndex(chatId, id, catalog) {
   const release = catalog.versions.find((item) => item.id === id);
   if (!release) {
-    await sendMessage(chatId, "❌ Versi tersebut sudah tidak tersedia.");
+    await replaceBotMessage(chatId, "❌ Versi tersebut sudah tidak tersedia.", undefined, catalog);
     return;
   }
 
-  await sendRelease(chatId, release, "Versi sebelumnya");
+  await sendRelease(chatId, release, "Versi sebelumnya", catalog);
 }
 
-async function handleHelp(chatId) {
-  await sendMessage(
+async function handleHelp(chatId, catalog) {
+  await replaceBotMessage(
     chatId,
     "Bantuan AetherX Bot\n\n/start - Buka menu download\n/latest - Download versi terbaru\n/old - Lihat versi sebelumnya\n/help - Bantuan penggunaan bot\n/about - Informasi tentang AetherX\n\nAdmin: /admin dan /cancel",
+    undefined,
+    catalog,
   );
 }
 
-async function handleAbout(chatId) {
-  await sendMessage(
+async function handleAbout(chatId, catalog) {
+  await replaceBotMessage(
     chatId,
     "AetherX Official Download Bot\n\nDownload versi terbaru atau versi sebelumnya dari sumber yang dikelola admin AetherX.",
+    undefined,
+    catalog,
   );
 }
 
@@ -587,21 +676,21 @@ async function handleUpdate(update) {
       await handleOld(message.chat.id, catalog);
       return false;
     case "/help":
-      await handleHelp(message.chat.id);
+      await handleHelp(message.chat.id, catalog);
       return false;
     case "/about":
-      await handleAbout(message.chat.id);
+      await handleAbout(message.chat.id, catalog);
       return false;
     case "/admin":
       if (!isAdmin(userId)) {
-        await sendMessage(message.chat.id, "❌ Kamu tidak memiliki akses admin.");
+        await replaceBotMessage(message.chat.id, "❌ Kamu tidak memiliki akses admin.", undefined, catalog);
         return false;
       }
       if (catalog.sessions[String(userId)]) {
         delete catalog.sessions[String(userId)];
         await saveCatalog(catalog);
       }
-      await showAdminMenu(message.chat.id);
+      await showAdminMenu(message.chat.id, catalog);
       return false;
     case "/cancel":
       if (!isAdmin(userId)) return false;
@@ -609,7 +698,7 @@ async function handleUpdate(update) {
         delete catalog.sessions[String(userId)];
         await saveCatalog(catalog);
       }
-      await sendMessage(message.chat.id, "❌ Tidak ada proses yang sedang berjalan.", adminKeyboard());
+      await replaceBotMessage(message.chat.id, "❌ Tidak ada proses yang sedang berjalan.", adminKeyboard(), catalog);
       return false;
     default:
       return false;
