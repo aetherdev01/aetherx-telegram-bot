@@ -5,7 +5,7 @@
   "type": "module",
   "description": "AetherX Telegram download bot for Vercel webhooks.",
   "engines": {
-    "node": ">=20"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "vercel dev"
