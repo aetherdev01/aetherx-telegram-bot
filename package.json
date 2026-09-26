@@ -1,0 +1,13 @@
+{
+  "name": "aetherx-telegram-download-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AetherX Telegram download bot for Vercel webhooks.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vercel dev"
+  }
+}
