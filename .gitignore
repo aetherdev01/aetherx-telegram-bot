@@ -1,5 +1,7 @@
 .env
 .env.local
+.env.*
 .vercel
 node_modules
-.env*
+npm-debug.log*
+aether.env

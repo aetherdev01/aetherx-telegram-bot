@@ -11,7 +11,7 @@ async function telegram(method, payload) {
 
   if (!response.ok || !data.ok) {
     throw new Error(
-      `Telegram ${method}: ${data.description || response.statusText}`
+      `Telegram ${method}: ${data.description || response.statusText}`,
     );
   }
 
@@ -26,11 +26,7 @@ export default async function handler(req, res) {
   try {
     const setupKey = req.query?.key;
 
-    if (
-      !process.env.BOT_TOKEN ||
-      !process.env.SETUP_KEY ||
-      !process.env.TELEGRAM_WEBHOOK_SECRET
-    ) {
+    if (!process.env.BOT_TOKEN || !process.env.SETUP_KEY || !process.env.TELEGRAM_WEBHOOK_SECRET) {
       return res.status(500).json({
         ok: false,
         error: "Missing required environment variables",
@@ -41,21 +37,18 @@ export default async function handler(req, res) {
       return res.status(401).send("Unauthorized");
     }
 
-    const host =
-      req.headers["x-forwarded-host"] ||
-      req.headers.host;
-
-    const protocol =
-      req.headers["x-forwarded-proto"] || "https";
-
+    const host = req.headers["x-forwarded-host"] || req.headers.host;
+    const protocol = req.headers["x-forwarded-proto"] || "https";
     const webhookUrl = `${protocol}://${host}/api/webhook`;
 
     const commands = [
       { command: "start", description: "Mulai bot dan pilih versi AetherX" },
       { command: "latest", description: "Download versi terbaru AetherX" },
-      { command: "old", description: "Lihat dan download versi AetherX sebelumnya" },
+      { command: "old", description: "Lihat versi AetherX sebelumnya" },
+      { command: "admin", description: "Kontrol bot (admin)" },
       { command: "help", description: "Bantuan penggunaan bot" },
       { command: "about", description: "Informasi tentang AetherX" },
+      { command: "cancel", description: "Batalkan proses admin" },
     ];
 
     await telegram("setWebhook", {
@@ -68,14 +61,13 @@ export default async function handler(req, res) {
     await telegram("setMyCommands", { commands });
 
     await telegram("setMyShortDescription", {
-      short_description:
-        "Official AetherX Download Bot — latest dan versi sebelumnya.",
+      short_description: "Official AetherX Download Bot — dikelola admin.",
       language_code: "id",
     });
 
     await telegram("setMyDescription", {
       description:
-        "Download AetherX dengan mudah dan cepat. Dapatkan versi terbaru atau versi sebelumnya melalui bot ini.",
+        "Download AetherX dengan mudah. Versi terbaru dan versi sebelumnya dikelola langsung oleh admin.",
       language_code: "id",
     });
 
@@ -86,6 +78,7 @@ export default async function handler(req, res) {
       message: "AetherX bot berhasil disetup.",
       bot: `@${me.username}`,
       webhook: webhookUrl,
+      adminTelegramId: String(process.env.ADMIN_TELEGRAM_ID || "7633494260"),
       commands,
     });
   } catch (error) {

@@ -1,6 +1,6 @@
 export default function handler(req, res) {
   res.status(200).json({
     ok: true,
-    service: "AetherX Telegram Bot"
+    service: "AetherX Telegram Bot",
   });
 }
