@@ -262,29 +262,41 @@ async function handleUpdate(update) {
   }
 }
 
-export default async function handler(request) {
-  if (request.method === "GET") {
-    return Response.json({ ok: true, service: "AetherX Telegram Bot", endpoint: "/api/webhook" });
+export default async function handler(req, res) {
+  if (req.method === "GET") {
+    return res.status(200).json({
+      ok: true,
+      service: "AetherX Telegram Bot",
+      endpoint: "/api/webhook",
+    });
   }
 
-  if (request.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405 });
+  if (req.method !== "POST") {
+    return res.status(405).send("Method Not Allowed");
   }
 
   try {
     env("BOT_TOKEN");
+
     const webhookSecret = env("TELEGRAM_WEBHOOK_SECRET");
-    const receivedSecret = request.headers.get("x-telegram-bot-api-secret-token");
+    const receivedSecret =
+      req.headers["x-telegram-bot-api-secret-token"];
 
     if (receivedSecret !== webhookSecret) {
-      return new Response("Unauthorized", { status: 401 });
+      return res.status(401).send("Unauthorized");
     }
 
-    const update = await request.json();
+    const update = req.body;
+
     await handleUpdate(update);
-    return Response.json({ ok: true });
+
+    return res.status(200).json({ ok: true });
   } catch (error) {
     console.error(error);
-    return Response.json({ ok: false, error: error.message }, { status: 500 });
+
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+    });
   }
 }

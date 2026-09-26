@@ -6,31 +6,49 @@ async function telegram(method, payload) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
+
   const data = await response.json();
+
   if (!response.ok || !data.ok) {
-    throw new Error(`Telegram ${method}: ${data.description || response.statusText}`);
+    throw new Error(
+      `Telegram ${method}: ${data.description || response.statusText}`
+    );
   }
+
   return data.result;
 }
 
-export default async function handler(request) {
-  if (request.method !== "GET") {
-    return new Response("Method Not Allowed", { status: 405 });
+export default async function handler(req, res) {
+  if (req.method !== "GET") {
+    return res.status(405).send("Method Not Allowed");
   }
 
   try {
-    const url = new URL(request.url);
-    const setupKey = url.searchParams.get("key");
+    const setupKey = req.query?.key;
 
-    if (!process.env.BOT_TOKEN || !process.env.SETUP_KEY || !process.env.TELEGRAM_WEBHOOK_SECRET) {
-      return Response.json({ ok: false, error: "Missing BOT_TOKEN, SETUP_KEY, or TELEGRAM_WEBHOOK_SECRET" }, { status: 500 });
+    if (
+      !process.env.BOT_TOKEN ||
+      !process.env.SETUP_KEY ||
+      !process.env.TELEGRAM_WEBHOOK_SECRET
+    ) {
+      return res.status(500).json({
+        ok: false,
+        error: "Missing required environment variables",
+      });
     }
 
     if (setupKey !== process.env.SETUP_KEY) {
-      return new Response("Unauthorized", { status: 401 });
+      return res.status(401).send("Unauthorized");
     }
 
-    const webhookUrl = `${url.origin}/api/webhook`;
+    const host =
+      req.headers["x-forwarded-host"] ||
+      req.headers.host;
+
+    const protocol =
+      req.headers["x-forwarded-proto"] || "https";
+
+    const webhookUrl = `${protocol}://${host}/api/webhook`;
 
     const commands = [
       { command: "start", description: "Mulai bot dan pilih versi AetherX" },
@@ -48,18 +66,22 @@ export default async function handler(request) {
     });
 
     await telegram("setMyCommands", { commands });
+
     await telegram("setMyShortDescription", {
-      short_description: "Official AetherX Download Bot — latest dan versi sebelumnya.",
+      short_description:
+        "Official AetherX Download Bot — latest dan versi sebelumnya.",
       language_code: "id",
     });
+
     await telegram("setMyDescription", {
-      description: "Download AetherX dengan mudah dan cepat. Dapatkan versi terbaru atau versi sebelumnya melalui bot ini.",
+      description:
+        "Download AetherX dengan mudah dan cepat. Dapatkan versi terbaru atau versi sebelumnya melalui bot ini.",
       language_code: "id",
     });
 
     const me = await telegram("getMe", {});
 
-    return Response.json({
+    return res.status(200).json({
       ok: true,
       message: "AetherX bot berhasil disetup.",
       bot: `@${me.username}`,
@@ -68,6 +90,10 @@ export default async function handler(request) {
     });
   } catch (error) {
     console.error(error);
-    return Response.json({ ok: false, error: error.message }, { status: 500 });
+
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+    });
   }
 }
